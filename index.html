@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bary - Reservation System</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      background: #f4f4f4;
+    }
+    .nav-bar {
+      position: fixed;
+      bottom: 0;
+      width: 100%;
+      background: #333;
+      display: flex;
+      justify-content: space-around;
+      padding: 10px 0;
+      z-index: 1000;
+    }
+    .nav-bar button {
+      padding: 12px;
+      font-size: 16px;
+      color: white;
+      background: #555;
+      border: none;
+      border-radius: 8px;
+      touch-action: manipulation;
+      transition: transform 0.2s ease-in-out, background 0.2s;
+    }
+    .nav-bar button.active, .nav-bar button:active {
+      background: #4CAF50;
+      transform: scale(0.95);
+    }
+    .section {
+      padding: 20px;
+      margin-bottom: 60px;
+      display: none;
+      animation: fadeIn 0.5s forwards;
+    }
+    .section.active {
+      display: block;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    h2 {
+      margin-bottom: 15px;
+      color: #333;
+    }
+    label {
+      display: block;
+      margin: 10px 0 5px;
+      font-size: 16px;
+    }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      margin-bottom: 10px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      background: #2196F3;
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover {
+      background: #1976D2;
+    }
+    canvas {
+      max-width: 100%;
+      margin: 20px 0;
+    }
+    #qr-video {
+      max-width: 100%;
+      display: none;
+      margin: 10px 0;
+    }
+    @media (min-width: 768px) {
+      .section {
+        max-width: 600px;
+        margin: 20px auto;
+      }
+      .nav-bar {
+        position: static;
+        justify-content: center;
+        gap: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- City Tax Section -->
+  <div id="city-tax" class="section">
+    <h2>City Tax Calculator</h2>
+    <label>Number of Guests: <input type="number" id="guests" min="1" value="1"></label>
+    <label>Number of Nights: <input type="number" id="nights" min="1" value="1"></label>
+    <p>Total City Tax: <span id="tax-result">0.00</span> CZK</p>
+  </div>
+
+  <!-- Wellness Section -->
+  <div id="wellness" class="section">
+    <h2>Wellness Booking</h2>
+    <label>Select Service:
+      <select id="service">
+        <option value="massage">Massage</option>
+        <option value="sauna">Sauna</option>
+        <option value="spa">Spa</option>
+      </select>
+    </label>
+    <label>Amount (CZK): <input type="number" id="amount" step="0.01" min="0" value="0"></label>
+    <p>Total: <span id="wellness-total">0.00</span> CZK</p>
+    <button onclick="saveWellness()">Save Booking</button>
+  </div>
+
+  <!-- Gifts Section -->
+  <div id="gifts" class="section active">
+    <h2>Gifts</h2>
+    <h3>Favorite Items</h3>
+    <ul id="favorites"></ul>
+    <h3>Add Gift</h3>
+    <label>Gift Item:
+      <select id="gift-item">
+        <option value="gift-card">Gift Card</option>
+        <option value="mug">Mug</option>
+        <option value="t-shirt">T-Shirt</option>
+        <option value="keychain">Keychain</option>
+        <option value="poster">Poster</option>
+      </select>
+    </label>
+    <label>Quantity: <input type="number" id="gift-quantity" min="1" value="1"></label>
+    <button onclick="addGift()">Add to Order</button>
+    <button onclick="startVoiceInput()">Voice Input</button>
+    <button onclick="startQRScanner()">Scan QR Code</button>
+    <video id="qr-video" autoplay playsinline></video>
+    <canvas id="qr-canvas" style="display: none;"></canvas>
+    <h3>Order History</h3>
+    <ul id="order-history"></ul>
+    <h3>Statistics</h3>
+    <canvas id="gift-stats"></canvas>
+  </div>
+
+  <!-- Navigation Bar -->
+  <div class="nav-bar">
+    <button onclick="showSection('gifts')" class="active">Gifts</button>
+    <button onclick="showSection('city-tax')">City Tax</button>
+    <button onclick="showSection('wellness')">Wellness</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script>
+    // Navigation
+    function showSection(sectionId) {
+      document.querySelectorAll('.section').forEach(s => {
+        s.classList.remove('active');
+        s.style.display = 'none';
+      });
+      document.getElementById(sectionId).classList.add('active');
+      document.getElementById(sectionId).style.display = 'block';
+      document.querySelectorAll('.nav-bar button').forEach(b => b.classList.remove('active'));
+      document.querySelector(`.nav-bar button[onclick="showSection('${sectionId}')"]`).classList.add('active');
+    }
+
+    // City Tax
+    const TAX_RATE = 21; // CZK per guest per night
+    const guestsInput = document.getElementById('guests');
+    const nightsInput = document.getElementById('nights');
+    const taxResult = document.getElementById('tax-result');
+
+    function calculateTax() {
+      const guests = parseInt(guestsInput.value) || 1;
+      const nights = parseInt(nightsInput.value) || 1;
+      const total = (guests * nights * TAX_RATE).toFixed(2);
+      taxResult.textContent = total;
+    }
+
+    guestsInput.addEventListener('input', calculateTax);
+    nightsInput.addEventListener('input', calculateTax);
+    calculateTax();
+
+    // Wellness
+    const serviceInput = document.getElementById('service');
+    const amountInput = document.getElementById('amount');
+    const wellnessTotal = document.getElementById('wellness-total');
+
+    function updateWellness() {
+      const amount = parseFloat(amountInput.value) || 0;
+      wellnessTotal.textContent = amount.toFixed(2);
+    }
+
+    function saveWellness() {
+      const wellness = {
+        service: serviceInput.value,
+        amount: parseFloat(amountInput.value) || 0,
+        date: new Date().toLocaleString()
+      };
+      const history = JSON.parse(localStorage.getItem('wellnessHistory')) || [];
+      history.push(wellness);
+      localStorage.setItem('wellnessHistory', JSON.stringify(history));
+      alert('Wellness booking saved!');
+    }
+
+    serviceInput.addEventListener('change', updateWellness);
+    amountInput.addEventListener('input', updateWellness);
+
+    // Gifts
+    const giftItem = document.getElementById('gift-item');
+    const giftQuantity = document.getElementById('gift-quantity');
+    const orderHistory = document.getElementById('order-history');
+    const favoritesList = document.getElementById('favorites');
+    const giftStatsCanvas = document.getElementById('gift-stats').getContext('2d');
+
+    function addGift() {
+      const item = giftItem.value;
+      const quantity = parseInt(giftQuantity.value) || 1;
+      const order = { item, quantity, date: new Date().toLocaleString() };
+      const history = JSON.parse(localStorage.getItem('giftHistory')) || [];
+      history.push(order);
+      localStorage.setItem('giftHistory', JSON.stringify(history));
+      updateOrderHistory();
+      updateFavorites();
+      updateStats();
+    }
+
+    function updateOrderHistory() {
+      const history = JSON.parse(localStorage.getItem('giftHistory')) || [];
+      orderHistory.innerHTML = history.map(h => `<li>${h.quantity}x ${h.item} (${h.date})</li>`).join('');
+    }
+
+    function updateFavorites() {
+      const history = JSON.parse(localStorage.getItem('giftHistory')) || [];
+      const counts = {};
+      history.forEach(h => {
+        counts[h.item] = (counts[h.item] || 0) + h.quantity;
+      });
+      const favorites = Object.entries(counts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([item, count]) => `<li>${item} (${count}x)</li>`);
+      favoritesList.innerHTML = favorites.join('');
+    }
+
+    function updateStats() {
+      const history = JSON.parse(localStorage.getItem('giftHistory')) || [];
+      const counts = {};
+      history.forEach(h => {
+        counts[h.item] = (counts[h.item] || 0) + h.quantity;
+      });
+      const labels = ['gift-card', 'mug', 't-shirt', 'keychain', 'poster'];
+      const data = labels.map(item => counts[item] || 0);
+      new Chart(giftStatsCanvas, {
+        type: 'bar',
+        data: {
+          labels: ['Gift Card', 'Mug', 'T-Shirt', 'Keychain', 'Poster'],
+          datasets: [{
+            label: 'Gift Orders',
+            data: data,
+            backgroundColor: ['#4CAF50', '#2196F3', '#FF9800', '#F44336', '#9C27B0'],
+            borderColor: ['#388E3C', '#1976D2', '#F57C00', '#D32F2F', '#7B1FA2'],
+            borderWidth: 1
+          }]
+        },
+        options: {
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // Voice Input
+    function startVoiceInput() {
+      if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.onresult = (event) => {
+          const command = event.results[0][0].transcript.toLowerCase();
+          const items = {
+            'gift card': 'gift-card', 'mug': 'mug', 't-shirt': 't-shirt',
+            'keychain': 'keychain', 'poster': 'poster'
+          };
+          const match = Object.keys(items).find(key => command.includes(key));
+          if (match) {
+            giftItem.value = items[match];
+            const quantityMatch = command.match(/\d+/);
+            giftQuantity.value = quantityMatch ? quantityMatch[0] : 1;
+            addGift();
+          } else {
+            alert('Item not recognized. Try saying "Add 2 gift cards" or similar.');
+          }
+        };
+        recognition.onerror = () => alert('Voice input failed. Please try again.');
+        recognition.start();
+      } else {
+        alert('Voice input not supported in this browser.');
+      }
+    }
+
+    // QR Code Scanner
+    const qrVideo = document.getElementById('qr-video');
+    const qrCanvas = document.getElementById('qr-canvas');
+    const qrContext = qrCanvas.getContext('2d');
+
+    function startQRScanner() {
+      qrVideo.style.display = 'block';
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(stream => {
+          qrVideo.srcObject = stream;
+          qrVideo.play();
+          scanQRCode();
+        })
+        .catch(() => alert('Camera access denied. Please allow camera permissions.'));
+    }
+
+    function scanQRCode() {
+      qrCanvas.width = qrVideo.videoWidth;
+      qrCanvas.height = qrVideo.videoHeight;
+      qrContext.drawImage(qrVideo, 0, 0, qrCanvas.width, qrCanvas.height);
+      const imageData = qrContext.getImageData(0, 0, qrCanvas.width, qrCanvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if (code) {
+        alert('QR Code scanned: ' + code.data);
+        qrVideo.srcObject.getTracks().forEach(track => track.stop());
+        qrVideo.style.display = 'none';
+      } else {
+        requestAnimationFrame(scanQRCode);
+      }
+    }
+
+    // Initialize
+    updateOrderHistory();
+    updateFavorites();
+    updateStats();
+  </script>
+</body>
+</html>
